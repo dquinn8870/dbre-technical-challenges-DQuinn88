@@ -1,0 +1,4 @@
+# CODEOWNERS for dbre-technical-challenges
+# All changes require review from the DBA team
+
+* @LetsGetChecked/dba
