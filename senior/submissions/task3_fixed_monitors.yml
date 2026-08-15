@@ -1,0 +1,239 @@
+# Datadog Monitors: RDS SQL Server Fleet — Post-Migration
+# Environment: Production (US-East-1)
+# Managed by: DBA Team
+# Context: These monitors cover the new RDS fleet after EC2→RDS migration
+# Note: Several monitors have issues that need correction
+
+# =============================================================================
+# Monitor 1: CPU Utilization (per-instance)
+# =============================================================================
+- name: "RDS CPU High"
+  include_tags: true
+  require_full_window: true
+  monitor_thresholds:
+    critical: 90
+    warning: 80
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 5
+  query: |
+    avg(last_5m):avg:aws.rds.cpuutilization{dbinstanceidentifier:*,engine:sqlserver} by {dbinstanceidentifier} >= 90
+  message: |
+    CPU for {{dbinstanceidentifier.name}} is above threshold!
+    Current: {{value}}%
+
+    @pagerduty-Production-US.SQL.Instance
+    @slack-dbre-alerts-production
+
+    {{#is_recovery}}
+    CPU recovered for {{dbinstanceidentifier.name}}.
+    @pagerduty-Production-US.SQL.Instance
+    @slack-dbre-alerts-production
+    {{/is_recovery}}
+
+# =============================================================================
+# Monitor 2: Free Storage Space
+# =============================================================================
+- name: "RDS storage running low"
+  include_tags: true
+  require_full_window: true
+  monitor_thresholds:
+    critical: 10000000000  # 10GB in bytes
+    warning: 50000000000   # 50GB in bytes
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 15
+  query: |
+    avg(last_15m):min:aws.rds.free_storage_space{engine:sqlserver} by {dbinstanceidentifier} <= 10000000000
+  message: |
+    Free storage for {{dbinstanceidentifier.name}} is below {{threshold}}!
+
+    If storage exhausts, the instance will become read-only.
+    Immediate action required.
+    
+    @pagerduty-Production-US.SQL.Instance
+    @slack-dbre-alerts-production
+   
+
+# =============================================================================
+# Monitor 3: Read Replica Lag
+# =============================================================================
+- name: "SQL Server replica lag alert"
+  include_tags: true
+  require_full_window: true
+  monitor_thresholds:
+    critical: 30
+    warning: 10
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 5
+  query: |
+    avg(last_5m):avg:aws.rds.replica_lag{engine:sqlserver} by {dbinstanceidentifier} >= 30
+  message: |
+    Replica lag for {{dbinstanceidentifier.name}} is {{value}} seconds!
+    This exceeds the {{threshold}}s threshold.
+
+    Check for long-running transactions on primary or network issues.
+
+    @pagerduty-Production-US.SQL.Instance 
+    @slack-dbre-alerts-production
+
+# =============================================================================
+# Monitor 4: Database Connections
+# =============================================================================
+- name: "Too many connections on {{dbinstanceidentifier.name}}"
+  include_tags: true
+  require_full_window: true
+  monitor_thresholds:
+    critical: 450
+    warning: 350
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 10
+  query: |
+    avg(last_10m):avg:aws.rds.database_connections{engine:sqlserver} by {dbinstanceidentifier} >= 450
+  message: |
+    {{dbinstanceidentifier.name}} has {{value}} active connections (threshold: {{threshold}}).
+
+    Possible connection pool leak or traffic spike.
+
+    @pagerduty-Production-US.SQL.Instance 
+    @slack-dbre-alerts-production
+    
+# =============================================================================
+# Monitor 5: Write IOPS (cost signal)
+# =============================================================================
+- name: "high write iops on rds"
+  include_tags: true
+  require_full_window: false
+  monitor_thresholds:
+    critical: 10000
+    warning: 7500
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 10
+  query: |
+    avg(last_10m):avg:aws.rds.write_iops{engine:sqlserver} by {dbinstanceidentifier} >= 10000
+  message: |
+    Write IOPS for {{dbinstanceidentifier.name}} are at {{value}} (threshold: {{threshold}}).
+    This may indicate unexpected write amplification or a runaway batch process.
+    Review active transactions and recent deployments.
+
+  @pagerduty-Production-US.SQL.Instance 
+  @slack-dbre-alerts-production
+  
+  # =============================================================================
+# Monitor 6: Composite Monitor
+# ============================================================================
+- name: "high write iops on rds"
+  include_tags: true
+  require_full_window: false
+  monitor_thresholds:
+    critical: 10000
+    warning: 7500
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 10
+  query: |
+    avg(last_10m):avg:aws.rds.write_iops{engine:sqlserver} by {dbinstanceidentifier} >= 10000
+  message: |
+    Write IOPS for {{dbinstanceidentifier.name}} are at {{value}} (threshold: {{threshold}}).
+    This may indicate unexpected write amplification or a runaway batch process.
+    Review active transactions and recent deployments.
+    
+ - name: "Too many connections on {{dbinstanceidentifier.name}}"
+  include_tags: true
+  require_full_window: true
+  monitor_thresholds:
+    critical: 450
+    warning: 350
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 10
+  query: |
+    avg(last_10m):avg:aws.rds.database_connections{engine:sqlserver} by {dbinstanceidentifier} >= 450
+  message: |
+    {{dbinstanceidentifier.name}} has {{value}} active connections (threshold: {{threshold}}).
+    Possible connection pool leak or traffic spike.
+    
+    
+- name: "high write iops on rds {{dbinstanceidentifier.name}} and Too many connections on {{dbinstanceidentifier.name}}"
+  include_tags: true
+  require_full_window: true
+  type: "Composite query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 10
+  query: |
+    avg(last_10m):avg:aws.rds.database_connections{engine:sqlserver} by {dbinstanceidentifier} >= 450 && avg(last_10m):avg:aws.rds.write_iops{engine:sqlserver} by {dbinstanceidentifier} >= 10000
+  message: |
+    {{dbinstanceidentifier.name}} has {{value}} active connections (threshold: {{threshold}}).
+    Possible connection pool leak or traffic spike.
+    Write IOPS for {{dbinstanceidentifier.name}} are at {{value}} (threshold: {{threshold}}).
+    
+  @pagerduty-Production-US.SQL.Instance 
+  @slack-dbre-alerts-production
+  
+  # =============================================================================
+# Monitor 7: Forcast Storage Space
+# =============================================================================
+- name: "RDS storage running low forcast"
+  include_tags: true
+  require_full_window: true
+  monitor_thresholds:
+    critical: 10000000000  # 10GB in bytes
+    warning: 50000000000   # 50GB in bytes
+  type: "query alert"
+  tags:
+  - "Team:DBA"
+  notify_no_data: true
+  no_data_timeframe: 14
+  query: |
+    avg(last_2w):forcast:aws.rds.free_storage_space{engine:sqlserver} by {dbinstanceidentifier} <= 10000000000
+  message: |
+    Free storage for {{dbinstanceidentifier.name}} will be nearing capacity in 14 days{{threshold}}!
+  Please monitor closely
+    
+    @pagerduty-Production-US.SQL.Instance
+    @slack-dbre-alerts-production
+    
+    # =============================================================================
+# Monitor 8: Muting Configuration "Not a part of my submission" 
+# =============================================================================
+  
+   This is not to be included as part of my submission just using this as a marker that I looked into solving this but am not a yaml SME. 
+   But the journey of being exposed to it in more depth has been enlightening. 
+ /****************************************************************
+AI generated not my submission just using for understanding" 
+    name: schedule-maintenance-downtime
+resource:
+  - type: datadog:DowntimeSchedule
+    name: weekly_server_maintenance
+    properties:
+      scope: "env:prod AND service:api"
+      monitorIdentifier:
+        - monitorTags:
+            - "team:backend"
+      recurringSchedule:
+        - recurrences:
+            - duration: "2h"
+              rrule: "FREQ=WEEKLY;BYDAY=SU"
+              start: "2026-08-16T02:00:00Z"
+      timezone: "UTC"
+      message: "Scheduled weekly maintenance window - suppressing alerts."
+********************************************************************************/
